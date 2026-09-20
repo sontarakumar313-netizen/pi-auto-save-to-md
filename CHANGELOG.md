@@ -1,5 +1,10 @@
 # pi-auto-save-to-md
 
+## 0.10.4
+
+- Export each user question and only its final assistant reply text. Omit thinking, intermediate assistant updates and failed retry messages in addition to tool activity.
+- Remove the unused thinking repair code and mark new content as format 2.1.
+
 ## 0.10.3
 
 - Omit tool calls, arguments and results from exported Markdown, including standalone results and tool-only assistant messages.

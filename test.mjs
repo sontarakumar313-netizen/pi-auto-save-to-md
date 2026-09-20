@@ -39,9 +39,9 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   });
   const save = () => extension.handlers.get("agent_settled")[0]({ type: "agent_settled" }, context());
   const user = (text) => session.appendMessage({ role: "user", content: text, timestamp: Date.now() });
-  const assistantBlocks = (content) => session.appendMessage({
+  const assistantBlocks = (content, stopReason = "stop") => session.appendMessage({
     role: "assistant", content, api: "openai-responses",
-    provider: "test", model: "test-model", stopReason: "stop", timestamp: Date.now(),
+    provider: "test", model: "test-model", stopReason, timestamp: Date.now(),
     usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 30,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
   });
@@ -52,14 +52,22 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   });
   const outputDir = join(root, "ai-conversations");
   const firstUser = user("中文提问：如何自动保存？");
+  assistant("INTERMEDIATE_UPDATE：我先检查一下。");
   assistantBlocks([
     { type: "thinking", thinking: "先分析保存逻辑。\n\n再检查事件。" },
+    { type: "text", text: "INTERMEDIATE_UPDATE：正在读取文件。" },
     { type: "toolCall", id: "call-1", name: "hidden_tool", arguments: { path: "HIDDEN_TOOL_ARGUMENT" } },
   ]);
   toolResult("call-1");
   assistantBlocks([{ type: "toolCall", id: "call-2", name: "hidden_tool", arguments: {} }]);
   toolResult("call-2");
   toolResult("orphan-call");
+  // A manual save during tool execution must not export an intermediate reply.
+  await extension.commands.get("save-conversation").handler("", context());
+  const [pendingFile] = await readdir(outputDir);
+  const pending = await readFile(join(outputDir, pendingFile), "utf8");
+  assert.match(pending, /中文提问：如何自动保存？/);
+  assert.doesNotMatch(pending, /^Assistant |INTERMEDIATE_UPDATE|先分析保存逻辑/gm);
   assistantBlocks([
     { type: "thinking", thinking: "保存逻辑已经确认。" },
     { type: "text", text: "首轮回复 ✅\n\n```js\nconsole.log('你好');\n```" },
@@ -72,25 +80,32 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   assert.match(firstContent, /首轮回复 ✅/);
   assert.match(firstContent, /```js\nconsole\.log\('你好'\);\n```/);
   assert.match(firstContent, /session_id:/);
-  assert.match(firstContent, /format_version: "2\.0"/);
-  assert.match(firstContent, /<details>\n<summary>Thinking<\/summary>\n\n先分析保存逻辑。\n\n再检查事件。\n\n<\/details>/);
-  assert.match(firstContent, /<details>\n<summary>Thinking<\/summary>\n\n保存逻辑已经确认。\n\n<\/details>\n\n首轮回复/);
+  assert.match(firstContent, /format_version: "2\.1"/);
+  assert.doesNotMatch(firstContent, /<details>|Thinking|先分析保存逻辑|保存逻辑已经确认|INTERMEDIATE_UPDATE/);
   assert.doesNotMatch(firstContent, /hidden_tool|HIDDEN_TOOL|Tool Calls|\[!tldr\]|empty response/);
-  assert.equal((firstContent.match(/^Assistant /gm) ?? []).length, 2);
+  assert.equal((firstContent.match(/^Assistant /gm) ?? []).length, 1);
+  assert.equal((firstContent.match(/^User /gm) ?? []).length, 1);
 
   await save();
   assert.equal(await readFile(firstPath, "utf8"), firstContent);
   session = SessionManager.open(session.getSessionFile());
   toolResult("late-call");
   user("第二轮提问");
+  assistant("INTERMEDIATE_UPDATE：继续检查。");
+  assistantBlocks([{ type: "text", text: "FAILED_RETRY" }], "error");
   assistant("第二轮回答");
+  user("第三轮提问");
+  assistant("INTERMEDIATE_UPDATE：补充检查。");
+  assistant("第三轮回答");
   await save();
   assert.deepEqual(await readdir(outputDir), [firstFile]);
   const continued = await readFile(firstPath, "utf8");
   assert.equal(continued.split("首轮回复 ✅").length - 1, 1);
   assert.match(continued, /第二轮回答/);
-  assert.doesNotMatch(continued, /hidden_tool|HIDDEN_TOOL/);
-  assert.equal((continued.match(/<details>/g) ?? []).length, 2);
+  assert.match(continued, /第三轮回答/);
+  assert.doesNotMatch(continued, /hidden_tool|HIDDEN_TOOL|<details>|INTERMEDIATE_UPDATE|FAILED_RETRY/);
+  assert.equal((continued.match(/^Assistant /gm) ?? []).length, 3);
+  assert.equal((continued.match(/^User /gm) ?? []).length, 3);
 
   session.branch(firstUser);
   assistant("另一分支的回答");

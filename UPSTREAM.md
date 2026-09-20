@@ -20,3 +20,6 @@ process: both register the same commands and save event handler.
 Version 0.10.3 changes Markdown rendering: tool calls and results are omitted,
 and thinking uses HTML `<details>` instead of Obsidian callouts. The append and
 branch-saving behavior is retained; old Markdown content is not rewritten.
+
+Version 0.10.4 exports only user questions and final assistant reply text,
+omitting thinking and intermediate assistant updates as well as tool activity.

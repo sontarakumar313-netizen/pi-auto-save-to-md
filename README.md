@@ -84,7 +84,7 @@ When the session's real name arrives after the file was created (e.g. Claudian g
 ---
 title: "Fix login redirect loop"
 agent: "pi"
-format_version: "2.0"
+format_version: "2.1"
 session_id: "d0a4f541-976d-4d1b-8e1c-30a1f2b3c4d5"
 session_key: "c2088d77"
 branch_last_entry_id: "019be3a2-1f4d-7c8a-9b01-d23e45f6a7b8"
@@ -120,19 +120,12 @@ The login page redirects in a loop after the auth refactor...
 Assistant <span style="font-size: 0.5em; color: var(--text-faint);">2026-08-29 13:05:40 · claude-sonnet-4-5</span>
 ===
 
-<details>
-<summary>Thinking</summary>
-
-Let me check the redirect chain...
-
-</details>
-
-I'll trace the middleware order first.
+Fixed the middleware redirect order; login tests pass.
 
 ---
 ````
 
-The body preserves user messages and assistant text. Tool names, arguments and results are omitted; assistant messages containing only tool calls do not leave empty headers. Thinking text is wrapped in collapsed `<details>` blocks with `<summary>Thinking</summary>`, in its original order.
+The body keeps each user question and the text of the last assistant reply before the next user message. Thinking, tool activity, intermediate updates and failed retries are omitted. Questions without a final reply are saved without an answer until one is available.
 
 This format applies to newly generated or appended content; existing history is not rewritten. The `messages`, token and cost metadata still count the original session, including hidden tool messages.
 
@@ -154,10 +147,6 @@ The recognized injected-block vocabulary:
 | any other tag       | verbatim                      | Pasted XML is never mangled                     |
 
 Each message block opens with a setext level-1 info header (`User`, `Assistant`) underlined with `===` — one level above the `##` headings AI content typically starts with, and distinguishable from content `#` headings when parsing. The header's metadata (local date-time, and the model for assistant messages) sits in a small faint `<span>` (`0.5em`, Obsidian's `--text-faint` color — renderers without the variable fall back to the inherited text color), so the role stays visually dominant while the details remain a glance away. Each block ends with a `---` separator wrapped in single blank lines (extra blank lines are trimmed), so blocks are easy to tell apart both when reading and when splitting the file programmatically. The document heading sits directly after the frontmatter with no blank line between them; appends heal the blank line that older versions wrote there.
-
-### Fragmented thinking repair
-
-Some upstream reasoning streams (observed with z-ai/GLM via OpenRouter) store thinking with every word — or every CJK character — on its own line: the original spaces collapse into leading spaces of one-word fragments joined by runs of newlines. The extension detects this corruption (lines starting with a single leading space, or a majority of 1–2-character fragment lines) and re-joins the fragments into flowing text, so saved thinking reads normally instead of one word per line. Paragraph breaks survive the repair: a separator run of 3+ newlines that follows a sentence-final character is a real paragraph break about three times out of four in corrupted blocks, so exactly those separators are restored to blank-line paragraphs while every other separator joins — a break is never inserted mid-sentence; worst case, one lands between two complete sentences, which still reads fine. Clean thinking blocks are written untouched.
 
 `cost` and the token fields cover the whole saved branch and include cached tokens (priced at the provider's cache rates), so the totals are comparable with provider-side accounting (e.g. OpenRouter activity). Requests that never landed in the session tree (failed retries, other sessions sharing the same API key) are necessarily excluded.
 

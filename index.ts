@@ -49,10 +49,9 @@
  *   degrades gracefully elsewhere — underlined with `===`, distinct from the
  *   `#`/`##` ATX headings AI content uses) and ends with a `---` separator
  *   wrapped in single blank lines.
- * - Tool calls and tool results are omitted from Markdown. Assistant entries
- *   containing only tool calls do not produce empty message blocks.
- * - Thinking text is wrapped in collapsed HTML <details> blocks with a
- *   <summary>Thinking</summary> heading, in its original message order.
+ * - Only user questions and the last assistant reply before the next user
+ *   message are rendered. Thinking, tool calls/results and intermediate
+ *   assistant messages are omitted. Unfinished tool/error turns have no reply.
  * - Injected prompt blocks: the host client and the agent runtime append
  *   machine-readable XML to user messages — the editor's active selection
  *   (CDATA content), note references and attachments (linked_note /
@@ -139,11 +138,6 @@
  * - Compaction: files archive the ORIGINAL messages (getBranch() returns the
  *   raw tree path, not the compaction-aware context), so a compacted session
  *   still exports its complete history.
- * - Thinking repair: reasoning blocks stored with the upstream
- *   newline-fragmentation corruption (one word per line) are detected and
- *   re-joined into flowing text before saving, keeping paragraph breaks
- *   where they survive as long separator runs after sentence ends; clean
- *   thinking is untouched.
  *
  * Manual commands:
  * - `/save-conversation` saves the current branch immediately and reports
@@ -227,7 +221,7 @@ const SAVE_STATE_SCHEMA = "1.2";
  * the frontmatter and the document heading); additive frontmatter fields do
  * NOT bump it — they are invisible to any within-major parser.
  */
-const FORMAT_VERSION = "2.0";
+const FORMAT_VERSION = "2.1";
 
 /**
  * Package version of this extension, read best-effort from the adjacent
@@ -431,98 +425,6 @@ interface BranchMeta {
   created: string;
   updated: string;
   projectRoot: string;
-}
-
-// ---------- thinking fragmentation repair ----------
-
-/**
- * Some upstream reasoning streams (observed with z-ai/GLM via OpenRouter) store
- * thinking as one word — or one CJK character — per line: the stream splits
- * tokens into fragments joined by runs of newlines, and the original spaces
- * survive only as leading spaces of the fragments. The saved markdown then has
- * every token on its own line, which is miserable to read and bloats storage.
- *
- * Detection uses two signatures validated against ~520 real thinking blocks:
- * lines starting with exactly one space (a survived word separator; blank-ish
- * " " lines included), and an excess of 1–2-char non-list-marker lines (CJK
- * fragments carry no leading space). Clean thinking never matches either.
- *
- * Repair re-joins the fragments into flowing text. Word separators — the
- * whitespace runs between two fragments — lose their newlines: run length
- * alone carries no recoverable meaning, because the same word separator
- * appears as 1, 2 or 3 newlines depending on the block. Original paragraph
- * boundaries survive as a faint but strong signal: a separator run of 3+
- * newlines that follows a sentence-final character (closing quotes and
- * brackets skipped when looking) marks a real paragraph break 73–93% of the
- * time in corrupted blocks, while plain word separators sit mid-sentence —
- * so exactly those separators become blank-line paragraph breaks and
- * everything else is joined. The sentence-final guard means a break is never
- * inserted mid-sentence: worst case, one lands between two complete
- * sentences, which still reads fine. Join spacing comes from the separator
- * itself: a separator containing a surviving space joins with one space, a
- * bare one (CJK fragments, attached punctuation) joins with nothing. Clean
- * blocks pass through untouched.
- */
-
-/** Line whose single leading space is a survived word separator. */
-function isThinkingSigLine(line: string): boolean {
-  return line === " " || /^ [^ *+\-\d]/.test(line);
-}
-
-/** Non-blank line of 1–2 chars that is not a standalone list marker. */
-function isThinkingShortFragment(line: string): boolean {
-  const s = line.trim();
-  if (s.length === 0 || s.length > 2) return false;
-  return !/^([-*+]|\d+[.)])$/.test(s);
-}
-
-/** Whether a thinking block shows the newline-fragmentation corruption. */
-function isFragmentedThinking(s: string): boolean {
-  const lines = s.split("\n");
-  const nonBlank = lines.filter((l) => l.trim().length > 0);
-  if (nonBlank.length === 0) return false;
-  const sig = lines.filter(isThinkingSigLine).length;
-  if (nonBlank.length < 8) return nonBlank.length >= 3 && sig >= 3;
-  if (sig / lines.length >= 0.12) return true;
-  return nonBlank.filter(isThinkingShortFragment).length / nonBlank.length >= 0.4;
-}
-
-/** Sentence-final characters: a long separator run after one may be a paragraph break. */
-const THINKING_SENTENCE_END = /[.!?。！？…]/;
-/** Closing punctuation skipped when looking for the sentence end behind it. */
-const THINKING_CLOSING = /[)\]}"'”』」）】》]/;
-/** Newlines a separator run needs before it can count as a paragraph break. */
-const THINKING_PARAGRAPH_RUN = 3;
-
-/** Repair newline-fragmented thinking; clean thinking is returned unchanged. */
-function repairThinking(s: string): string {
-  if (!isFragmentedThinking(s)) return s;
-  debug("repairing fragmented thinking block:", s.length, "chars");
-  let out = "";
-  let i = 0;
-  while (i < s.length) {
-    let end = i;
-    while (end < s.length && !/\s/.test(s[end])) end++;
-    out += s.slice(i, end);
-    let next = end;
-    while (next < s.length && /\s/.test(s[next])) next++;
-    if (next >= s.length) break; // trailing whitespace: drop
-    const sep = s.slice(end, next);
-    if (!/[\n\r]/.test(sep)) {
-      out += " "; // plain spaces: a single word separator
-    } else {
-      const newlines = sep.match(/[\n\r]/g)!.length;
-      let p = out.length - 1;
-      while (p >= 0 && THINKING_CLOSING.test(out[p])) p--;
-      const sentenceEnd = p >= 0 && THINKING_SENTENCE_END.test(out[p]);
-      if (newlines >= THINKING_PARAGRAPH_RUN && sentenceEnd) out += "\n\n";
-      else if (/[ \t]/.test(sep)) out += " ";
-      // A bare newline separator attached CJK fragments or punctuation:
-      // join with nothing.
-    }
-    i = next;
-  }
-  return out.replace(/[ \t]{2,}/g, " ").trim();
 }
 
 // ---------- foreign sessions for /save-conversation-all ----------
@@ -964,48 +866,33 @@ export default function (pi: ExtensionAPI) {
   }
 
   function renderAssistant(m: AssistantMessage, t: string): string {
-    // Render blocks in their original chronological order: thinking always
-    // precedes the text it produced, instead of being grouped after the fact.
-    // Setext H1 (`===` underline): one level above the `##` headings AI
-    // content typically starts with, and distinct from content `#` headings.
+    if (m.stopReason !== "stop" && m.stopReason !== "length") return "";
+    if (m.content.some((block) => block.type === "toolCall")) return "";
+    const text = m.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n\n");
+    if (!text.trim()) return "";
     const header = messageHeader("Assistant", [t, m.model].filter(Boolean).join(" · "));
-    const parts: string[] = [];
-    const thinkings: string[] = [];
-    const flushThinking = () => {
-      if (thinkings.length) {
-        parts.push(`<details>\n<summary>Thinking</summary>\n\n${thinkings.join("\n\n")}\n\n</details>`);
-        thinkings.length = 0;
-      }
-    };
-    for (const b of m.content) {
-      if (b.type === "text") {
-        flushThinking();
-        parts.push(b.text);
-      } else if (b.type === "thinking") {
-        thinkings.push(repairThinking(b.thinking));
-      }
-    }
-    flushThinking();
-    if (m.errorMessage) parts.push(`> Error: ${m.errorMessage.replace(/\s+/g, " ").trim()}`);
-    if (parts.every((part) => !part.trim())) return "";
-    return `${header}\n\n${parts.join("\n\n")}`;
+    return `${header}\n\n${text}`;
   }
 
-  /** Render a chronological list of message entries as markdown blocks. */
+  /** Keep each user question and only its last assistant message. */
   function renderEntries(entries: SessionMessageEntry[]): string {
     const blocks: string[] = [];
+    let reply = "";
     for (const e of entries) {
       const m = e.message;
       const t = dateTime(e.timestamp);
       if (m.role === "user") {
+        if (reply) blocks.push(reply);
+        reply = "";
         blocks.push(`${messageHeader("User", t)}\n\n${renderUserMessageText(userText(m.content))}`);
       } else if (m.role === "assistant") {
-        const rendered = renderAssistant(m, t);
-        if (rendered) blocks.push(rendered);
+        reply = renderAssistant(m, t);
       }
-      // Other roles (toolResult, custom, bashExecution, branchSummary, compactionSummary)
-      // are not part of the rendered conversation record.
     }
+    if (reply) blocks.push(reply);
     if (blocks.length === 0) return "";
     // Every block ends with a `---` separator wrapped in single blank lines
     // (the blank line above also keeps `---` from turning the last content
