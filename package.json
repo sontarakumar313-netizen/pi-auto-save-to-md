@@ -1,0 +1,64 @@
+{
+  "name": "pi-auto-save-to-md",
+  "version": "0.10.2",
+  "description": "Pi extension that automatically saves each completed conversation turn as a markdown file with YAML frontmatter, one file per session-tree branch.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Licong Yang",
+    "email": "licong.yang@icloud.com",
+    "url": "https://github.com/licongy"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sontarakumar313-netizen/pi-auto-save-to-md.git"
+  },
+  "homepage": "https://github.com/sontarakumar313-netizen/pi-auto-save-to-md#readme",
+  "bugs": {
+    "url": "https://github.com/sontarakumar313-netizen/pi-auto-save-to-md/issues"
+  },
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "markdown",
+    "conversation",
+    "session",
+    "export",
+    "auto-save",
+    "archive"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "debug.ts",
+    "markdown.ts",
+    "README.md",
+    "README.zh.md",
+    "UPSTREAM.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.82.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.86.0",
+    "@types/node": "^22.20.4",
+    "typescript": "^7.0.2"
+  }
+}

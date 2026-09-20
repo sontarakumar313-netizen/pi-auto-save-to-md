@@ -1,0 +1,18 @@
+# Upstream provenance
+
+This is a standalone distribution of **pi-auto-save-to-markdown 0.10.2** by
+Licong Yang, from [licongy/pi-claudian](https://github.com/licongy/pi-claudian).
+
+- Source commit: `1c555c157fdfc9114200b27e52642da25a8c9ddc`
+- Source directory: `packages/auto-save-to-markdown`
+- License: MIT; the original copyright notice is preserved in [LICENSE](LICENSE).
+- `CHANGELOG.md` records the upstream history up to the imported version.
+
+Standalone changes: package name and repository metadata, installation instructions,
+self-contained TypeScript configuration, development dependency lockfile, Node.js
+requirement aligned with Pi 0.86.0, command labels and a local integration test.
+The save algorithm, command names, environment variable and
+persisted state identifiers are retained for compatibility with upstream.
+
+Do not enable this package together with the original package in the same Pi
+process: both register the same commands and save event handler.
