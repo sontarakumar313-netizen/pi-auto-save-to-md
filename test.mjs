@@ -39,15 +39,31 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   });
   const save = () => extension.handlers.get("agent_settled")[0]({ type: "agent_settled" }, context());
   const user = (text) => session.appendMessage({ role: "user", content: text, timestamp: Date.now() });
-  const assistant = (text) => session.appendMessage({
-    role: "assistant", content: [{ type: "text", text }], api: "openai-responses",
+  const assistantBlocks = (content) => session.appendMessage({
+    role: "assistant", content, api: "openai-responses",
     provider: "test", model: "test-model", stopReason: "stop", timestamp: Date.now(),
     usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 30,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
   });
+  const assistant = (text) => assistantBlocks([{ type: "text", text }]);
+  const toolResult = (toolCallId) => session.appendMessage({
+    role: "toolResult", toolCallId, toolName: "hidden_tool",
+    content: [{ type: "text", text: "HIDDEN_TOOL_RESULT" }], isError: false, timestamp: Date.now(),
+  });
   const outputDir = join(root, "ai-conversations");
   const firstUser = user("中文提问：如何自动保存？");
-  assistant("首轮回复 ✅\n\n```js\nconsole.log('你好');\n```");
+  assistantBlocks([
+    { type: "thinking", thinking: "先分析保存逻辑。\n\n再检查事件。" },
+    { type: "toolCall", id: "call-1", name: "hidden_tool", arguments: { path: "HIDDEN_TOOL_ARGUMENT" } },
+  ]);
+  toolResult("call-1");
+  assistantBlocks([{ type: "toolCall", id: "call-2", name: "hidden_tool", arguments: {} }]);
+  toolResult("call-2");
+  toolResult("orphan-call");
+  assistantBlocks([
+    { type: "thinking", thinking: "保存逻辑已经确认。" },
+    { type: "text", text: "首轮回复 ✅\n\n```js\nconsole.log('你好');\n```" },
+  ]);
   await save();
   const [firstFile] = await readdir(outputDir);
   const firstPath = join(outputDir, firstFile);
@@ -56,10 +72,16 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   assert.match(firstContent, /首轮回复 ✅/);
   assert.match(firstContent, /```js\nconsole\.log\('你好'\);\n```/);
   assert.match(firstContent, /session_id:/);
+  assert.match(firstContent, /format_version: "2\.0"/);
+  assert.match(firstContent, /<details>\n<summary>Thinking<\/summary>\n\n先分析保存逻辑。\n\n再检查事件。\n\n<\/details>/);
+  assert.match(firstContent, /<details>\n<summary>Thinking<\/summary>\n\n保存逻辑已经确认。\n\n<\/details>\n\n首轮回复/);
+  assert.doesNotMatch(firstContent, /hidden_tool|HIDDEN_TOOL|Tool Calls|\[!tldr\]|empty response/);
+  assert.equal((firstContent.match(/^Assistant /gm) ?? []).length, 2);
 
   await save();
   assert.equal(await readFile(firstPath, "utf8"), firstContent);
   session = SessionManager.open(session.getSessionFile());
+  toolResult("late-call");
   user("第二轮提问");
   assistant("第二轮回答");
   await save();
@@ -67,6 +89,8 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   const continued = await readFile(firstPath, "utf8");
   assert.equal(continued.split("首轮回复 ✅").length - 1, 1);
   assert.match(continued, /第二轮回答/);
+  assert.doesNotMatch(continued, /hidden_tool|HIDDEN_TOOL/);
+  assert.equal((continued.match(/<details>/g) ?? []).length, 2);
 
   session.branch(firstUser);
   assistant("另一分支的回答");

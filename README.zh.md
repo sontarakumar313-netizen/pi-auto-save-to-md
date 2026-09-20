@@ -100,7 +100,7 @@ npm pack --dry-run
 ---
 title: "修复登录重定向死循环"
 agent: "pi"
-format_version: "1.6"
+format_version: "2.0"
 session_id: "d0a4f541-976d-4d1b-8e1c-30a1f2b3c4d5"
 session_key: "c2088d77"
 branch_last_entry_id: "019be3a2-1f4d-7c8a-9b01-d23e45f6a7b8"
@@ -136,33 +136,21 @@ auth 重构之后登录页一直重定向死循环……
 Assistant <span style="font-size: 0.5em; color: var(--text-faint);">2026-08-29 13:05:40 · claude-sonnet-4-5</span>
 ===
 
-> [!tldr]- Thinking
->
-> 先看中间件的执行顺序……
+<details>
+<summary>Thinking</summary>
+
+先看中间件的执行顺序……
+
+</details>
 
 我先追踪一下中间件链。
-
-> [!quote]- Tool Calls · 1 (read)
-> **`read`** `{"filePath":"/Users/me/project/src/auth/middleware.ts"}`
->
-> ```
-> import { NextResponse } from "next/server";
-> export function middleware(…) …
-> ```
 
 ---
 ````
 
-正文完整渲染 user / assistant 消息（assistant 的 thinking 与每轮工具调用分别折叠在可折叠的 callout 中——`> [!tldr]- Thinking` 和 `> [!quote]- Tool Calls · …`），每次工具调用连同其完整原始结果一起记录：归档文件是可能被 @ 引回对话的史料，截断的半个结果在工具重调时是浪费、在不再调用时是误导，而局部阅读（grep、按行段读取）让体积不成问题。之所以用 callout 而不是 HTML `<details>`，是因为 callout 是纯 Markdown，在任何渲染器里都是有效文本：支持的环境画出可折叠面板，不支持的环境退化为普通引用块；原始 HTML 块则没有这等待遇——Obsidian 不解析 HTML 块内嵌的 Markdown，Quartz（remark/CommonMark 管线）同样如此，无效的 HTML 属性甚至能让整页渲染失败，`<details>` 无法跨工具承载内容。参数以完整 JSON 包在 inline code 里，结果逐字保真——空白原样、不截断——放在 fenced code block 中（分隔符长度会自动压过内容中的反引号序列），工具的原始输出因此按字面渲染，不会被当作 Markdown 解析。
+正文保留用户消息和助手文本；工具调用名称、参数与结果不写入 Markdown，仅含工具调用的助手消息也不会留下空白标题。思考文本使用默认折叠的 `<details>` 和 `<summary>Thinking</summary>` 包裹，按原始顺序出现在回答之前。
 
-### Callout 在 Obsidian 之外的渲染
-
-Callout 本质是首行带类型标记的引用块（`> [!note] 标题`）：认得这个标记的渲染器把它画成带标题、配色、可折叠的面板，其余渲染器看到的仍是完全合法的引用块。这套语法由 Obsidian 发扬光大，并以折叠标记（`-` 收起、`+` 展开）和任意类型加以扩展；GitHub 则把同一标记的五种类型（`[!note]` …`[!caution]`，无折叠）标准化为自家的 "alerts"。归档文件在 Obsidian 中渲染最佳——自定义类型与预设折叠都在——但会画 callout 面板的远不止 Obsidian 一家：
-
-- **[Quartz](https://quartz.jzhao.xyz)** —— 发布 Obsidian vault 的静态站点生成器，渲染同一套 callout 语法，含折叠。
-- **VS Code** —— 内置 markdown 预览装上扩展即可渲染面板，如 Markdown Obsidian Callout、vscode-markdown-obsidian-alert、Markdown GitHub Alerts & Obsidian Callouts。
-- **静态站点管线** —— remark 插件把 callout 渲染到网页上：remark-obsidian-callout（Astro 等）解析完整 Obsidian 语法，remark-github-blockquote-alert 对应 GitHub 子集。
-- **标准化子集** —— GitHub 本身、Typora（偏好设置中开启）与 Markdown Preview Enhanced 渲染的是 GitHub 的 alert 类型；本插件用到的 `tldr`/`quote` 类型与折叠标记不在其列，在这些环境里 callout 于是退化为普通（依旧可读的）引用块——正是该语法与生俱来的优雅降级。
+此格式用于新生成或追加的内容；已有文件中的历史内容不会自动重写。`messages` 和 token/费用字段仍按原始会话统计，包含被隐藏的工具消息。
 
 客户端或 agent 注入到用户消息中的提示块——编辑器当前选区、附加或引用的笔记、加载的 skill——会从原始 XML（Markdown 渲染器无法有效呈现，在 Obsidian 中显示为裸露的尖括号文本）重新渲染为通用 callout。不做任何逐块解析：标题取标记名的分词（`editor_selection` → Editor Selection），正文以形似 vault 相对笔记路径的 `path`/`location` 值开头——直接渲染为不带标签的 wikilink（`[[…|别名]]` 在 Obsidian、Quartz、Markdown Preview Enhanced 等环境里都是可点击链接，别名文件名自解释，`path:` 标签反而冗余），其余属性以 `**属性**: 值` 跟随，最后是引用内容。所有 callout 一律预设折叠——用户提供的块（选区、笔记附件）为 `> [!quote]-`（仅有属性的自闭合笔记引用同样折叠），agent 侧痕迹（skill）为 `> [!note]- Skill · <名称>` 标记（加载的 skill 名称直接进标题，折叠状态也能看到是哪个 skill；location 跟在正文，内容丢弃）；连续的同标签块（中间只有空白）合并进同一个 callout，一串笔记引用因此收拢为一份列表（skill 标记不合并：各自标注各自的 skill）。未知标记原样保留，用户粘贴的 XML 内容绝不会被误改；回退文件名 slug 也从剥离全部已知块后的纯键入文本推导。
 
@@ -182,14 +170,6 @@ Callout 本质是首行带类型标记的引用块（`> [!note] 标题`）：认
 | 其他任何标签        | 原样保留                      | 粘贴的 XML 绝不会被误改       |
 
 每个消息块以 setext 一级信息头（`User`、`Assistant`，下一行以 `===` 下划）开头——高于 AI 内容常见的 `##` 二级标题，解析时也能与内容中的 `#` 一级标题区分开。信息头的元数据（本地日期时间，assistant 消息还带模型名）放在一个小号浅色 `<span>` 中（`0.5em`，Obsidian 的 `--text-faint` 颜色；无此变量的渲染器回退为继承的正文字色），角色名因此保持醒目，细节又触手可及。每个消息块以"上下各一个空行"包裹的 `---` 分隔线结尾（多余空行会被裁剪），无论是阅读还是程序化切分，都能清楚地区分每个消息块。文档标题紧跟在 frontmatter 之后，中间没有空行；追加保存时会顺带修复旧版本在两者之间写下的空行。
-
-同一个保存文件在 Obsidian 中的两种渲染视图——顶部为 `<标题>-<key>-<时间>.md` 文件名，消息块带角色信息头和时间戳，Thinking 与 Tool Calls 两个 callout 处于折叠状态。首先是 Properties 面板展开、展示全部 frontmatter 字段的效果：
-
-![保存的对话文件在 Obsidian 中渲染、Properties 面板展开的效果：文件名呈"标题-key-时间"格式，全部 frontmatter 字段以属性形式可见（title、agent、format_version、session_id、cost、tokens、时间戳、project_root、session_file），下方为消息正文开头](https://raw.githubusercontent.com/licongy/pi-claudian/master/packages/auto-save-to-markdown/screenshot-1.png)
-
-然后是 Properties 面板折叠、完整对话正文的效果：
-
-![保存的对话文件在 Obsidian 中的渲染效果：文件名呈"标题-key-时间"格式，frontmatter 折叠在 Properties 面板中，消息块带角色信息头和时间戳，Thinking 与 Tool Calls callout 处于折叠状态](https://raw.githubusercontent.com/licongy/pi-claudian/master/packages/auto-save-to-markdown/screenshot-2.png)
 
 ### 碎片化 thinking 修复
 

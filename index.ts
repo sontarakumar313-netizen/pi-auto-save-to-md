@@ -49,24 +49,10 @@
  *   degrades gracefully elsewhere — underlined with `===`, distinct from the
  *   `#`/`##` ATX headings AI content uses) and ends with a `---` separator
  *   wrapped in single blank lines.
- * - Tool call/result folding: calls live in the assistant entry while their
- *   results are separate toolResult entries; saves pair them by toolCall id
- *   and fold each assistant block's calls, with their FULL results, into one
- *   collapsed Obsidian callout (`> [!quote]- Tool Calls · …`). Thinking folds
- *   the same way into `> [!tldr]- Thinking`. Callouts are used instead of
- *   HTML `<details>` because Obsidian's views render embedded markdown
- *   inside HTML blocks unreliably, while callouts fold and render markdown
- *   in both Live Preview and Reading view. Outside Obsidian the callouts
- *   degrade to plain blockquotes. Arguments render as full JSON in inline
- *   code spans and results verbatim — whitespace intact, nothing capped —
- *   in fenced code blocks (delimiters sized to survive backticks inside the
- *   content), so raw output renders literally instead of being parsed as
- *   markdown. Nothing is truncated because the file is a documentary record
- *   that may be @-referenced back into a conversation: a half result is
- *   wasted when the tool is called again and misleading when it is not,
- *   while local reading (grep, ranged reads) makes size a non-issue. A
- *   result whose call was saved in an earlier file (mid-turn manual save)
- *   renders as a standalone block with the same full content.
+ * - Tool calls and tool results are omitted from Markdown. Assistant entries
+ *   containing only tool calls do not produce empty message blocks.
+ * - Thinking text is wrapped in collapsed HTML <details> blocks with a
+ *   <summary>Thinking</summary> heading, in its original message order.
  * - Injected prompt blocks: the host client and the agent runtime append
  *   machine-readable XML to user messages — the editor's active selection
  *   (CDATA content), note references and attachments (linked_note /
@@ -199,9 +185,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { debug } from "./debug.js";
 import {
-  callout,
-  fencedCode,
-  inlineCode,
   renderUserMessageText,
   stripInjectedBlocks,
 } from "./markdown.js";
@@ -244,7 +227,7 @@ const SAVE_STATE_SCHEMA = "1.2";
  * the frontmatter and the document heading); additive frontmatter fields do
  * NOT bump it — they are invisible to any within-major parser.
  */
-const FORMAT_VERSION = "1.6";
+const FORMAT_VERSION = "2.0";
 
 /**
  * Package version of this extension, read best-effort from the adjacent
@@ -268,7 +251,6 @@ const TITLE_FALLBACK_LENGTH = 40;
 type AgentMessage = SessionMessageEntry["message"];
 type UserMessage = Extract<AgentMessage, { role: "user" }>;
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
-type ToolResultMessage = Extract<AgentMessage, { role: "toolResult" }>;
 
 /**
  * Per-save state persisted in the session tree via pi.appendEntry().
@@ -970,15 +952,6 @@ export default function (pi: ExtensionAPI) {
     return "untitled";
   }
 
-  /** Full argument JSON on one line (JSON.stringify escapes newlines), never truncated. */
-  function renderArgs(args: unknown): string {
-    try {
-      return JSON.stringify(args) ?? "";
-    } catch {
-      return String(args);
-    }
-  }
-
   // ---------- markdown rendering ----------
 
   /**
@@ -990,71 +963,7 @@ export default function (pi: ExtensionAPI) {
     return s.replace(/^(?:[ \t]*\n)+/, "").replace(/\s+$/, "");
   }
 
-  /** One tool call with its paired full result (null when no result entry exists). */
-  interface RenderedToolCall {
-    name: string;
-    args: string;
-    result: string | null;
-    error: boolean;
-  }
-
-  /**
-   * Full raw result text: text blocks joined with blank lines, non-text
-   * blocks as placeholders. Error status stays OUT of the content (it rides
-   * the call's head line) so the saved text is exactly what the tool
-   * returned.
-   */
-  function resultText(m: ToolResultMessage): string {
-    const texts: string[] = [];
-    for (const b of m.content) {
-      if (b.type === "text") texts.push(b.text);
-      else texts.push(`_[image: ${b.mimeType}]_`);
-    }
-    return texts.join("\n\n").trim();
-  }
-
-  /**
-   * Standalone block for a result whose call is not in this file — same full
-   * content as folded results.
-   */
-  function renderToolResult(m: ToolResultMessage): string {
-    const text = resultText(m);
-    const err = m.isError ? " (error)" : "";
-    return `**Tool · ${m.toolName}**${err}\n\n${text ? fencedCode(text) : "_(empty result)_"}`;
-  }
-
-  /** "read, web_search ×2" — tool names with repeat counts, first-seen order. */
-  function summarizeToolNames(names: string[]): string {
-    const counts = new Map<string, number>();
-    for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
-    return [...counts].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(", ");
-  }
-
-  /**
-   * Fold tool calls and their paired results into one collapsed callout.
-   * Arguments render as full JSON in inline code spans and results verbatim
-   * in fenced code blocks, so raw output renders literally instead of being
-   * parsed as markdown.
-   */
-  function renderToolCallsCallout(calls: RenderedToolCall[]): string {
-    const summary = summarizeToolNames(calls.map((c) => c.name));
-    const items = calls.map((c) => {
-      const err = c.error ? " (error)" : "";
-      const head = c.args
-        ? `**\`${c.name}\`**${err} ${inlineCode(c.args)}`
-        : `**\`${c.name}\`**${err}`;
-      const result =
-        c.result === null ? "_(no result)_" : c.result ? fencedCode(c.result) : "_(empty result)_";
-      return `${head}\n\n${result}`;
-    });
-    return callout("quote", `Tool Calls · ${calls.length} (${summary})`, items.join("\n\n"));
-  }
-
-  function renderAssistant(
-    m: AssistantMessage,
-    t: string,
-    results: Map<string, ToolResultMessage>,
-  ): string {
+  function renderAssistant(m: AssistantMessage, t: string): string {
     // Render blocks in their original chronological order: thinking always
     // precedes the text it produced, instead of being grouped after the fact.
     // Setext H1 (`===` underline): one level above the `##` headings AI
@@ -1064,48 +973,26 @@ export default function (pi: ExtensionAPI) {
     const thinkings: string[] = [];
     const flushThinking = () => {
       if (thinkings.length) {
-        parts.push(callout("tldr", "Thinking", thinkings.join("\n\n")));
+        parts.push(`<details>\n<summary>Thinking</summary>\n\n${thinkings.join("\n\n")}\n\n</details>`);
         thinkings.length = 0;
       }
     };
-    const calls: RenderedToolCall[] = [];
     for (const b of m.content) {
       if (b.type === "text") {
         flushThinking();
         parts.push(b.text);
       } else if (b.type === "thinking") {
         thinkings.push(repairThinking(b.thinking));
-      } else if (b.type === "toolCall") {
-        flushThinking();
-        const r = results.get(b.id);
-        results.delete(b.id);
-        calls.push({
-          name: b.name,
-          args: renderArgs(b.arguments),
-          result: r ? resultText(r) : null,
-          error: r ? r.isError : false,
-        });
       }
     }
     flushThinking();
-    if (calls.length) parts.push(renderToolCallsCallout(calls));
     if (m.errorMessage) parts.push(`> Error: ${m.errorMessage.replace(/\s+/g, " ").trim()}`);
-    if (parts.length === 0) parts.push("_(empty response)_");
+    if (parts.every((part) => !part.trim())) return "";
     return `${header}\n\n${parts.join("\n\n")}`;
   }
 
   /** Render a chronological list of message entries as markdown blocks. */
   function renderEntries(entries: SessionMessageEntry[]): string {
-    // Tool calls sit in assistant entries while their results are separate
-    // toolResult entries, paired by toolCall id. Collect results first so
-    // each assistant block can fold its calls together with their results;
-    // results left unclaimed (their call was saved in an earlier file, e.g.
-    // a mid-turn manual save) render as standalone blocks.
-    const results = new Map<string, ToolResultMessage>();
-    for (const e of entries) {
-      if (e.message.role === "toolResult") results.set(e.message.toolCallId, e.message);
-    }
-
     const blocks: string[] = [];
     for (const e of entries) {
       const m = e.message;
@@ -1113,14 +1000,10 @@ export default function (pi: ExtensionAPI) {
       if (m.role === "user") {
         blocks.push(`${messageHeader("User", t)}\n\n${renderUserMessageText(userText(m.content))}`);
       } else if (m.role === "assistant") {
-        blocks.push(renderAssistant(m, t, results));
-      } else if (m.role === "toolResult") {
-        // Claimed results (deleted from the map by their assistant block)
-        // were already folded inline; the rest have no call in this file.
-        if (!results.has(m.toolCallId)) continue;
-        blocks.push(renderToolResult(m));
+        const rendered = renderAssistant(m, t);
+        if (rendered) blocks.push(rendered);
       }
-      // Other roles (custom, bashExecution, branchSummary, compactionSummary)
+      // Other roles (toolResult, custom, bashExecution, branchSummary, compactionSummary)
       // are not part of the rendered conversation record.
     }
     if (blocks.length === 0) return "";

@@ -6,7 +6,7 @@ Licong Yang, from [licongy/pi-claudian](https://github.com/licongy/pi-claudian).
 - Source commit: `1c555c157fdfc9114200b27e52642da25a8c9ddc`
 - Source directory: `packages/auto-save-to-markdown`
 - License: MIT; the original copyright notice is preserved in [LICENSE](LICENSE).
-- `CHANGELOG.md` records the upstream history up to the imported version.
+- `CHANGELOG.md` records fork changes followed by the original upstream history.
 
 Standalone changes: package name and repository metadata, installation instructions,
 self-contained TypeScript configuration, development dependency lockfile, Node.js
@@ -16,3 +16,7 @@ persisted state identifiers are retained for compatibility with upstream.
 
 Do not enable this package together with the original package in the same Pi
 process: both register the same commands and save event handler.
+
+Version 0.10.3 changes Markdown rendering: tool calls and results are omitted,
+and thinking uses HTML `<details>` instead of Obsidian callouts. The append and
+branch-saving behavior is retained; old Markdown content is not rewritten.

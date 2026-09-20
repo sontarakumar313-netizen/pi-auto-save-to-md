@@ -84,7 +84,7 @@ When the session's real name arrives after the file was created (e.g. Claudian g
 ---
 title: "Fix login redirect loop"
 agent: "pi"
-format_version: "1.6"
+format_version: "2.0"
 session_id: "d0a4f541-976d-4d1b-8e1c-30a1f2b3c4d5"
 session_key: "c2088d77"
 branch_last_entry_id: "019be3a2-1f4d-7c8a-9b01-d23e45f6a7b8"
@@ -120,33 +120,21 @@ The login page redirects in a loop after the auth refactor...
 Assistant <span style="font-size: 0.5em; color: var(--text-faint);">2026-08-29 13:05:40 · claude-sonnet-4-5</span>
 ===
 
-> [!tldr]- Thinking
->
-> Let me check the redirect chain...
+<details>
+<summary>Thinking</summary>
+
+Let me check the redirect chain...
+
+</details>
 
 I'll trace the middleware order first.
-
-> [!quote]- Tool Calls · 1 (read)
-> **`read`** `{"filePath":"/Users/me/project/src/auth/middleware.ts"}`
->
-> ```
-> import { NextResponse } from "next/server";
-> export function middleware(…) …
-> ```
 
 ---
 ````
 
-The body renders user and assistant messages in full (assistant thinking and per-turn tool calls are each folded into a collapsed callout — `> [!tldr]- Thinking` and `> [!quote]- Tool Calls · …`), recording every tool call with its full raw result: the file is a documentary record that may be @-referenced back into a conversation, and a truncated half-result would be wasted when the tool is called again and misleading when it is not, while local reading (grep, ranged reads) makes size a non-issue. Callouts are used instead of HTML `<details>` because a callout is plain markdown — meaningful in every renderer, a panel where supported and a blockquote everywhere else — whereas raw HTML blocks have no such portability: Obsidian does not parse markdown inside HTML blocks, and neither does Quartz's remark/CommonMark pipeline (invalid HTML there can even break a page outright), so `<details>` cannot be relied on to carry content across the tools these files are read in. Arguments render as full JSON in inline code spans and results verbatim — whitespace intact, nothing capped — in fenced code blocks (with a delimiter sized to survive backticks inside the content), so raw tool output renders literally instead of being parsed as markdown.
+The body preserves user messages and assistant text. Tool names, arguments and results are omitted; assistant messages containing only tool calls do not leave empty headers. Thinking text is wrapped in collapsed `<details>` blocks with `<summary>Thinking</summary>`, in its original order.
 
-### Callouts beyond Obsidian
-
-A callout is a blockquote whose first line carries a type marker (`> [!note] Title`): renderers that understand the marker draw a titled, colored, optionally collapsible panel, and every other renderer still sees a perfectly valid blockquote. Obsidian popularized the syntax and extends it with fold markers (`-` collapsed, `+` expanded) and arbitrary types; GitHub standardized a five-type subset of the same marker (`[!note]` …`[!caution]`, no folding) as its "alerts". These files render best in Obsidian — custom types and preset-collapsed folds included — but Obsidian is far from the only viewer that draws the panels:
-
-- **[Quartz](https://quartz.jzhao.xyz)** — the static-site generator for publishing Obsidian vaults, renders the same callout syntax, folding included.
-- **VS Code** — extensions add the panels to the built-in markdown preview, e.g. Markdown Obsidian Callout, vscode-markdown-obsidian-alert, or Markdown GitHub Alerts & Obsidian Callouts.
-- **Static-site pipelines** — remark plugins render callouts on the web: remark-obsidian-callout (Astro and friends) parses the full Obsidian syntax, remark-github-blockquote-alert the GitHub subset.
-- **The standardized subset** — GitHub itself, Typora (opt-in), and Markdown Preview Enhanced render GitHub's alert types; this plugin's `tldr`/`quote` types and fold markers live outside that subset, so on those surfaces the callouts fall back to plain — still perfectly readable — blockquotes, exactly the graceful degradation the syntax was designed for.
+This format applies to newly generated or appended content; existing history is not rewritten. The `messages`, token and cost metadata still count the original session, including hidden tool messages.
 
 Prompt blocks the client or the agent injects into a user message — the editor's active selection, attached or referenced notes, loaded skills — are re-rendered from their raw XML (which markdown viewers cannot present usefully — Obsidian shows it as literal angle-bracket text) into generic callouts. No block is parsed individually: the title is the tag name in words (`editor_selection` → Editor Selection), and the body opens with vault-shaped `path`/`location` values as bare wikilinks (`[[…|alias]]` is a clickable link in Obsidian, Quartz, and Markdown Preview Enhanced alike; the aliased filename speaks for itself — no `path:` label), followed by the remaining attributes as `**name**: value` items, then the content. Every callout is preset-collapsed — user-provided blocks (selections, note attachments) as `> [!quote]-`, even when they carry only attributes (the client emits note references as self-closing tags carrying just a path), agent-side skill traces as a `> [!note]- Skill · <name>` marker (the loaded skill's name rides the title, so the collapsed marker still says which skill; the location follows in the body, the content is dropped) — and consecutive blocks of the same tag (nothing but whitespace between them) merge into one callout, so a run of note references collapses into a single list. Unknown markup is left verbatim, so XML pasted as content is never mangled — and the fallback filename slug derives from the typed message with every known block stripped.
 
@@ -166,14 +154,6 @@ The recognized injected-block vocabulary:
 | any other tag       | verbatim                      | Pasted XML is never mangled                     |
 
 Each message block opens with a setext level-1 info header (`User`, `Assistant`) underlined with `===` — one level above the `##` headings AI content typically starts with, and distinguishable from content `#` headings when parsing. The header's metadata (local date-time, and the model for assistant messages) sits in a small faint `<span>` (`0.5em`, Obsidian's `--text-faint` color — renderers without the variable fall back to the inherited text color), so the role stays visually dominant while the details remain a glance away. Each block ends with a `---` separator wrapped in single blank lines (extra blank lines are trimmed), so blocks are easy to tell apart both when reading and when splitting the file programmatically. The document heading sits directly after the frontmatter with no blank line between them; appends heal the blank line that older versions wrote there.
-
-Two views of the same saved file rendered in Obsidian — the `<title>-<key>-<time>.md` filename on top, message blocks with role headers and timestamps, and the Thinking and Tool Calls callouts collapsed. First with the Properties panel expanded, showing all frontmatter fields:
-
-![A saved conversation file rendered in Obsidian with the Properties panel expanded: filename in the title-key-time pattern, all frontmatter fields visible as properties (title, agent, format version, session id, cost, tokens, timestamps, project root, session file), and the beginning of the message body](https://raw.githubusercontent.com/licongy/pi-claudian/master/packages/auto-save-to-markdown/screenshot-1.png)
-
-Then with the Properties panel folded away and the full conversation body in view:
-
-![A saved conversation file rendered in Obsidian: filename in the title-key-time pattern, frontmatter folded into the Properties panel, message blocks with role headers and timestamps, and collapsed Thinking and Tool Calls callouts](https://raw.githubusercontent.com/licongy/pi-claudian/master/packages/auto-save-to-markdown/screenshot-2.png)
 
 ### Fragmented thinking repair
 

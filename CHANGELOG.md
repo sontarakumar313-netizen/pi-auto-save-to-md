@@ -1,4 +1,12 @@
-# pi-auto-save-to-markdown
+# pi-auto-save-to-md
+
+## 0.10.3
+
+- Omit tool calls, arguments and results from exported Markdown, including standalone results and tool-only assistant messages.
+- Wrap thinking text in collapsed HTML `<details>` blocks with a `Thinking` summary.
+- Mark newly written content as format 2.0; existing historical content is not rewritten.
+
+The entries below are the original upstream changelog.
 
 ## 0.10.2
 
