@@ -737,6 +737,58 @@ function defaultSessionsDir(cwd: string): string {
 }
 
 export default function (pi: ExtensionAPI) {
+  const fastStateType = "pi-auto-save-to-md-codex-fast";
+  let codexFast = false;
+
+  function showCodexFastStatus(ctx: ExtensionContext) {
+    if (ctx.hasUI) {
+      ctx.ui.setStatus("codex-fast", codexFast
+        ? (ctx.model?.provider === "openai-codex" ? "Codex fast: on" : "Codex fast: on (inactive)")
+        : undefined);
+    }
+  }
+
+  function restoreCodexFast(ctx: ExtensionContext) {
+    codexFast = false;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type === "custom" && entry.customType === fastStateType) {
+        codexFast = (entry.data as { enabled: boolean }).enabled;
+      }
+    }
+    showCodexFastStatus(ctx);
+  }
+
+  pi.on("session_start", (_event, ctx) => restoreCodexFast(ctx));
+  pi.on("session_tree", (_event, ctx) => restoreCodexFast(ctx));
+  pi.on("model_select", (_event, ctx) => showCodexFastStatus(ctx));
+
+  pi.registerCommand("codex-fast", {
+    description: "Codex priority processing (higher usage): /codex-fast on|off|status",
+    handler: async (args, ctx) => {
+      const action = args.trim() || "status";
+      if (action !== "on" && action !== "off" && action !== "status") {
+        ctx.ui.notify("Usage: /codex-fast on|off|status", "error");
+        return;
+      }
+      if (action !== "status") {
+        codexFast = action === "on";
+        pi.appendEntry(fastStateType, { enabled: codexFast });
+      }
+      showCodexFastStatus(ctx);
+      ctx.ui.notify(codexFast
+        ? "Codex fast: on — requests priority processing for openai-codex; consumes more usage."
+          + (ctx.model?.provider === "openai-codex" ? "" : " Inactive for the current provider.")
+        : "Codex fast: off.", "info");
+    },
+  });
+
+  pi.on("before_provider_request", (event, ctx) => {
+    if (codexFast && ctx.model?.provider === "openai-codex") {
+      // Pi's Codex provider builds an object payload for both HTTP and WebSocket requests.
+      return { ...(event.payload as Record<string, unknown>), service_tier: "priority" };
+    }
+  });
+
   /**
    * Resolve the target directory. The env var may hold a relative folder name
    * (resolved against the session cwd), an absolute path, or "." / "" for the

@@ -51,6 +51,27 @@ Pi 未持久化的会话（内存态、`--no-session`——包括宿主客户端
 - **推迟**（defer）保存期间 jsonl 发生变化的 session（其运行时仍在写入）：保存只在文件自读取后未被改动时才继续。被推迟的 session 由其运行时或下一轮批量自然补齐。
 - **汇报**汇总——`N saved, M up to date, K skipped, …`——异常情况逐 session 告警（附 session id 前 8 位标识）。
 
+## Codex 快速模式
+
+使用 ChatGPT 账号登录 Pi 的 `openai-codex` 后，可以运行：
+
+```text
+/codex-fast on
+/codex-fast status
+/codex-fast off
+```
+
+默认关闭；不带参数时查看状态。开启后，扩展为后续 `openai-codex` 请求设置
+`service_tier: "priority"`，请求 Fast 优先处理。思考强度保持原设置，其他 provider 不受影响。
+开关保存在当前会话分支中，重启或 `/reload` 后恢复，切换分支时恢复该分支的设置；新会话默认关闭。
+终端状态栏显示 `Codex fast: on`，切换到其他 provider 时显示 `inactive`。
+关闭后，扩展停止添加优先处理参数。正在执行的请求不受开关变更影响。
+
+Fast 模式可能消耗更多账号额度，能否实际获得优先处理取决于账号、模型及服务端支持。
+状态栏表示已开启优先处理请求，不代表服务端已确认加速；服务端错误由 Pi 正常报告。
+参见 [Codex 快速模式](https://learn.chatgpt.com/docs/agent-configuration/speed) 和
+[Fast 请求参数](https://developers.openai.com/api/docs/guides/fast-mode)。
+
 ## 配置
 
 目标文件夹由环境变量 `PI_SAVE_CONVERSATION_DIR` 控制（Pi 没有扩展设置 API）：

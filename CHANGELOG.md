@@ -1,5 +1,9 @@
 # pi-auto-save-to-md
 
+## Unreleased
+
+- Add `/codex-fast on|off|status` to request priority processing for ChatGPT-authenticated `openai-codex` requests, with per-branch persistence and a footer status.
+
 ## 0.10.4
 
 - Export each user question and only its final assistant reply text. Omit thinking, intermediate assistant updates and failed retry messages in addition to tool activity.

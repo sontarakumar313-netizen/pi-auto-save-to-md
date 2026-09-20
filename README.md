@@ -55,6 +55,25 @@ Batch: run `/save-conversation-all` to save **every session of the current proje
 - **Defers** a session whose jsonl changed while it was being processed (its runtime is still writing it): the save only proceeds when the file is verified unchanged since it was read. Deferred sessions are continued by their own runtime or by the next batch run.
 - **Reports** a summary — `N saved, M up to date, K skipped, …` — with per-session warnings for anything anomalous (each tagged with the first 8 chars of its session id).
 
+## Codex fast mode
+
+When signed in with ChatGPT through Pi's `openai-codex` provider, use
+`/codex-fast on`, `/codex-fast off`, or `/codex-fast status` (also the default
+when no argument is supplied). Fast mode is off for new sessions.
+
+When enabled, subsequent `openai-codex` requests include `service_tier: "priority"`.
+Reasoning effort stays unchanged, and other providers are unaffected. The setting
+is stored in the current session branch and restored on restart, `/reload`, or
+tree navigation. The footer shows `Codex fast: on`, or `inactive` on other
+providers. Turning it off stops adding the priority parameter. Requests already
+in progress are unaffected.
+
+Fast mode can consume more account usage. Availability depends on the account,
+model, and server; the footer indicates the requested mode, not confirmed priority
+processing. Pi reports provider errors normally. See the official
+[Codex speed guide](https://learn.chatgpt.com/docs/agent-configuration/speed) and
+[Fast request parameter](https://developers.openai.com/api/docs/guides/fast-mode).
+
 ## Configuration
 
 The target folder is controlled by the `PI_SAVE_CONVERSATION_DIR` environment variable (Pi has no per-extension settings API):

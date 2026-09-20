@@ -6,6 +6,80 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { discoverAndLoadExtensions, SessionManager } from "@earendil-works/pi-coding-agent";
 
+test("Codex fast mode persists per branch and only rewrites Codex requests", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "pi-codex-fast-"));
+  t.after(async () => {
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    await rm(root, { recursive: true });
+  });
+  const packageDir = dirname(fileURLToPath(import.meta.url));
+  let loaded = await discoverAndLoadExtensions([packageDir], root, join(root, "agent"));
+  assert.deepEqual(loaded.errors, []);
+  let extension = loaded.extensions[0];
+  const session = SessionManager.inMemory(root);
+  const notifications = [];
+  const statuses = new Map();
+  const ctx = {
+    cwd: root, hasUI: true, sessionManager: session,
+    model: { provider: "openai-codex", api: "openai-codex-responses" },
+    ui: {
+      notify: (message, level) => notifications.push({ message, level }),
+      setStatus: (key, text) => statuses.set(key, text),
+    },
+  };
+  loaded.runtime.appendEntry = (type, data) => session.appendCustomEntry(type, data);
+  const emit = (type, fields = {}) => extension.handlers.get(type)[0]({ type, ...fields }, ctx);
+  const command = (args) => extension.commands.get("codex-fast").handler(args, ctx);
+  const payload = { model: "codex-test", input: [], reasoning: { effort: "high" } };
+  const request = () => emit("before_provider_request", { payload });
+
+  await emit("session_start");
+  assert.equal(await request(), undefined);
+  await command("on");
+  const onLeaf = session.getLeafId();
+  assert.deepEqual(await request(), { ...payload, service_tier: "priority" });
+  assert.equal(payload.service_tier, undefined);
+  assert.equal(statuses.get("codex-fast"), "Codex fast: on");
+  const entryCount = session.getEntries().length;
+  await command("status");
+  await command("");
+  await command("invalid");
+  assert.equal(session.getEntries().length, entryCount);
+  assert.equal(notifications.at(-1).level, "error");
+  assert.deepEqual(await request(), { ...payload, service_tier: "priority" });
+
+  for (const provider of ["openai", "anthropic", "custom-proxy"]) {
+    ctx.model = { provider, api: "openai-responses" };
+    await emit("model_select");
+    assert.equal(await request(), undefined);
+    assert.equal(statuses.get("codex-fast"), "Codex fast: on (inactive)");
+  }
+  ctx.model = { provider: "openai-codex", api: "openai-codex-responses" };
+
+  // Reloading creates a fresh extension instance; its setting comes from the session.
+  loaded = await discoverAndLoadExtensions([packageDir], root, join(root, "agent"));
+  assert.deepEqual(loaded.errors, []);
+  extension = loaded.extensions[0];
+  loaded.runtime.appendEntry = (type, data) => session.appendCustomEntry(type, data);
+  await emit("session_start");
+  assert.deepEqual(await request(), { ...payload, service_tier: "priority" });
+  await command("off");
+  const offLeaf = session.getLeafId();
+  assert.equal(await request(), undefined);
+  assert.equal(statuses.get("codex-fast"), undefined);
+
+  session.branch(onLeaf);
+  await emit("session_tree");
+  assert.deepEqual(await request(), { ...payload, service_tier: "priority" });
+  session.branch(offLeaf);
+  await emit("session_tree");
+  assert.equal(await request(), undefined);
+
+  ctx.sessionManager = SessionManager.inMemory(root);
+  await emit("session_start");
+  assert.equal(await request(), undefined);
+});
+
 test("Pi loads the package and saves, resumes and branches without duplicate messages", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "pi-auto-save-to-md-"));
   t.after(async () => {
@@ -25,7 +99,7 @@ test("Pi loads the package and saves, resumes and branches without duplicate mes
   assert.deepEqual(loaded.errors, []);
   assert.equal(loaded.extensions.length, 1);
   const extension = loaded.extensions[0];
-  assert.deepEqual([...extension.commands.keys()].sort(), ["save-conversation", "save-conversation-all"]);
+  assert.deepEqual([...extension.commands.keys()].sort(), ["codex-fast", "save-conversation", "save-conversation-all"]);
   assert.equal(extension.handlers.get("agent_settled").length, 1);
 
   let session = SessionManager.create(root, join(root, "sessions"));
